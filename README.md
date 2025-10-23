@@ -2,6 +2,8 @@
 
 영어 ↔ 한국어 번역을 지원하는 듀얼 모델 워크플로우입니다. `davidkim205/iris-7b`를 vLLM으로 구동해 빠른 배치 번역을 제공하며, VRAM이 제한된 환경에서는 Seq2Seq(NLLB) 모델을 선택할 수 있습니다.
 
+본 프로젝트는 "[dodari](https://github.com/vEduardovich/dodari)" 프로젝트에 영감을 받았습니다.
+
 ---
 
 ## 핵심 특징
