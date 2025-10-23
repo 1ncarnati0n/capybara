@@ -1,0 +1,24 @@
+# vLLM for fast inference
+vllm>=0.8.2
+
+# Transformers for model loading
+transformers>=4.46.0
+
+# PyTorch
+torch>=2.0.0
+
+# Gradio for UI
+gradio>=5.0
+
+# Language detection
+langdetect
+
+# Text processing
+nltk==3.8.1
+
+# EPUB processing
+beautifulsoup4
+EbookLib
+
+# File encoding detection
+chardet
