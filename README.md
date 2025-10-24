@@ -73,9 +73,22 @@ python test_llm.py
 # LLM vs Seq2Seq 속도/출력 비교
 python test_models.py
 
-# 프롬프트 전략 탐색 (실험적)
-python test_prompt_tuner.py --file 분석결과/test_prompt.txt --limit 100 --direction auto
+# 프롬프트 전략 탐색 v2.0 (도메인별 테스트 내장)
+# 모든 도메인 테스트 (기술, 문학, 신조어, 일상, 학술)
+python test_prompt_tuner.py --domains all --limit 10
+
+# 특정 도메인만 테스트
+python test_prompt_tuner.py --domains tech literary --limit 5
+
+# 기타 옵션
+python test_prompt_tuner.py --help
 ```
+
+**프롬프트 튜너 v2.0 특징:**
+- 파일 내부에 5개 도메인의 테스트 문장 내장 (기술, 문학, 신조어/속어, 일상, 학술)
+- 5가지 프롬프트 전략 자동 비교 (domain_fewshot, instruct_only, minimal, cot_style, role_based)
+- 도메인별 평가 지표 (전문용어 보존, 문체 일관성 등)
+- 상세한 마크다운 리포트 자동 생성
 
 모든 스크립트는 `capybara/분석결과/`에 타임스탬프 로그를 남깁니다.
 

@@ -310,35 +310,33 @@ class Capybara:
             return ""
 
         if self.model_type == "llm":
-            # LLM: Instruction-based 프롬프트 (번역 최적화)
+            # LLM: domain_fewshot 전략 (prompt_tuner.py 검증 결과 적용)
             if self.origin_lang == "en":
-                prompt = f"""You are a professional translator. Translate the following English text to natural Korean. Preserve the tone and nuances.
+                prompt = f"""You are a professional translator.
+Preserve tone and nuances.
+Output only the Korean translation without quotes or labels.
 
 Examples:
 English: "Good morning."
 Korean: "좋은 아침입니다."
 
-English: "Thank you very much for your help."
-Korean: "도움을 주셔서 정말 감사합니다."
-
-English: "I hope you have a wonderful day."
-Korean: "멋진 하루 보내시길 바랍니다."
+English: "Thank you very much."
+Korean: "정말 감사합니다."
 
 Now translate this:
 English: "{text}"
 Korean:"""
             else:
-                prompt = f"""You are a professional translator. Translate the following Korean text to natural English. Preserve the tone and nuances.
+                prompt = f"""You are a professional translator.
+Preserve tone and nuances.
+Output only the English translation without quotes or labels.
 
 Examples:
 Korean: "좋은 아침입니다."
 English: "Good morning."
 
-Korean: "도움을 주셔서 정말 감사합니다."
-English: "Thank you very much for your help."
-
-Korean: "멋진 하루 보내시길 바랍니다."
-English: "I hope you have a wonderful day."
+Korean: "정말 감사합니다."
+English: "Thank you very much."
 
 Now translate this:
 Korean: "{text}"
@@ -375,35 +373,33 @@ English:"""
             return [""] * len(texts)
 
         if self.model_type == "llm":
-            # LLM: Instruction-based 프롬프트 생성 (번역 최적화)
+            # LLM: domain_fewshot 전략 (prompt_tuner.py 검증 결과 적용)
             if self.origin_lang == "en":
-                prompts = [f"""You are a professional translator. Translate the following English text to natural Korean. Preserve the tone and nuances.
+                prompts = [f"""You are a professional translator.
+Preserve tone and nuances.
+Output only the Korean translation without quotes or labels.
 
 Examples:
 English: "Good morning."
 Korean: "좋은 아침입니다."
 
-English: "Thank you very much for your help."
-Korean: "도움을 주셔서 정말 감사합니다."
-
-English: "I hope you have a wonderful day."
-Korean: "멋진 하루 보내시길 바랍니다."
+English: "Thank you very much."
+Korean: "정말 감사합니다."
 
 Now translate this:
 English: "{text}"
 Korean:""" for text in non_empty_texts]
             else:
-                prompts = [f"""You are a professional translator. Translate the following Korean text to natural English. Preserve the tone and nuances.
+                prompts = [f"""You are a professional translator.
+Preserve tone and nuances.
+Output only the English translation without quotes or labels.
 
 Examples:
 Korean: "좋은 아침입니다."
 English: "Good morning."
 
-Korean: "도움을 주셔서 정말 감사합니다."
-English: "Thank you very much for your help."
-
-Korean: "멋진 하루 보내시길 바랍니다."
-English: "I hope you have a wonderful day."
+Korean: "정말 감사합니다."
+English: "Thank you very much."
 
 Now translate this:
 Korean: "{text}"
