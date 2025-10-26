@@ -1,4 +1,4 @@
-# 프롬프트 튜너 v2.0 사용 가이드
+# TUNER 가이드 (LLM 전용)
 
 ## 개요
 
@@ -20,29 +20,18 @@
 
 ```bash
 cd capybara
-
-# 모든 도메인 테스트 (각 도메인당 10개 문장)
-python test_prompt_tuner.py --domains all --limit 10
-
-# 특정 도메인만 테스트
-python test_prompt_tuner.py --domains tech literary --limit 5
-
-# 신조어/속어 집중 테스트
-python test_prompt_tuner.py --domains slang --limit 15
+python tuner.py
 ```
 
 ### 고급 옵션
 
-```bash
-# GPU 메모리 사용률 조정
-python test_prompt_tuner.py --domains all --limit 10 --gpu_mem 0.85
+튜너 실행 시 파일 상단에 정의된 상수를 수정하여 설정을 조정할 수 있습니다.
 
-# 배치 크기 조정 (속도 최적화)
-python test_prompt_tuner.py --domains all --limit 10 --batch_size 32
+- 모델: `TESTING_LLM_MODEL`
+- 도메인/문장/배치: `TESTING_DOMAINS`, `TESTING_PROMPT_LIMIT`, `TESTING_BATCH_SIZE`
+- 샘플링: `TESTING_PROMPT_TEMPERATURE`, `TESTING_TOP_P`, `TESTING_MAX_TOKENS`, `TESTING_REPETITION_PENALTY`
 
-# Temperature 조정 (창의성 vs 일관성)
-python test_prompt_tuner.py --domains all --limit 10 --temperature 0.1
-```
+또는 `main()` 내부의 스윕 리스트(temps/reps/top_ps/max_toks)를 변경하여 그리드 스윕 범위를 확장하세요.
 
 ### 전체 옵션 목록
 
@@ -164,26 +153,53 @@ python test_prompt_tuner.py --help
 ## 실전 활용 팁
 
 ### 1. 도메인 선택
-```bash
-# 기술 문서 번역 최적화
-python test_prompt_tuner.py --domains tech --limit 15
-
-# 소설/에세이 번역 최적화
-python test_prompt_tuner.py --domains literary casual --limit 10
-
-# 소셜 미디어/블로그 번역 최적화
-python test_prompt_tuner.py --domains slang casual --limit 15
-```
+튜너는 기본적으로 5개 도메인을 모두 테스트합니다. 특정 도메인만 실험하려면 `TESTING_DOMAINS`를 수정하세요.
 
 ### 2. 결과 적용
-리포트에서 추천된 전략을 [capybara.py](capybara.py)의 프롬프트에 반영:
+리포트에서 추천된 전략을 [capybara.py](capybara.py)의 프롬프트/샘플링 로직에 반영:
 
 ```python
 # 예: role_based 전략이 최고 점수를 받은 경우
 template = f"""You are an expert translator specialized in {domain} texts.
 Your task: Translate English to natural Korean.
 Requirements: {domain_inst}
-Output: Only the Korean translation, nothing else.
+Rules: Output a single line containing only the Korean translation. No quotes, no labels, no explanations.
+
+---
+
+## 자동 적용 흐름
+
+1) `python tuner.py` 실행 → 설정/전략을 평가 → 최고 구성 선별
+2) 최고 구성(temperature/top_p/max_tokens/repetition_penalty)이 `capybara/hyperparams.py`에 저장(자동)
+3) `python capybara.py` 또는 `bash start.sh` 실행 시, `hyperparams.py`의 기본값으로 LLM 로드/생성
+
+---
+
+## 향후 개선 제안
+
+- 성능/구조 최적화
+  - 스윕 중 LLM 인스턴스 1회만 로드하고 SamplingParams만 교체(현재는 조합별 재로딩 가능성 → 속도/VRAM 효율 개선).
+  - 프롬프트 빌더/평가/스윕 제어를 모듈로 분리해 유지보수성을 향상.
+
+- 평가 지표 보강
+  - 정량 지표 추가: chrF / sentence-BLEU(참조가 있을 경우) 등으로 미세 품질 차이를 반영.
+  - 언어 감지 보조: 한글 비율(가-힣 범위) 기반 간단 필터로 `langdetect` 오탐 보완.
+  - 도메인 가중치 집계(가중 평균/최소값 기반 등)로 선택 기준 다변화.
+
+- 스윕 확장/제어
+  - `top_p`(예: 0.90/0.92/0.95), `max_tokens`(128/256/384), `temperature`(0.2/0.3/0.4) 등 매트릭스 확장.
+  - 빠른 모드(전략 서브셋/도메인 서브셋) vs 정밀 모드(전체) 분리.
+  - seed/고정 옵션과 재현성 메타데이터(실행 환경/파라미터) 로그화.
+
+- 적용 자동화 고도화
+  - 현재 구현: 최고 구성은 자동으로 `hyperparams.py`에 반영됨.
+  - 추가: 최고 전략(전략명)을 JSON으로 저장하고 앱 프롬프트 템플릿에 자동 반영하는 옵션.
+  - UI에서 "튜너 권장 설정 사용" 토글 제공.
+
+- 운영/테스트
+  - start.sh에 튜너 진입 옵션 추가(`bash start.sh --tuner`).
+  - 회귀 테스트: 샘플 셋 고정 후 점수 하락 감지 시 알림/롤백.
+
 
 [English Text]
 {text}

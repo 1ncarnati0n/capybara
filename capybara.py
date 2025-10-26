@@ -15,6 +15,7 @@ from ebooklib import epub
 from langdetect import detect
 import nltk
 from vllm import LLM, SamplingParams
+import hyperparams as hp
 from bs4 import BeautifulSoup
 import gradio as gr
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, pipeline
@@ -44,7 +45,7 @@ class Capybara:
         self.model_type = "llm"  # 기본값: LLM
 
         # vLLM 모델 설정
-        self.selected_model = "davidkim205/iris-7b"
+        self.selected_model = hp.LLM_MODEL
         self.llm = None
         self.sampling_params = None
         self.loaded_model_name = None  # 현재 로드된 vLLM 모델명
@@ -237,24 +238,18 @@ class Capybara:
             self.llm = LLM(
                 model=self.selected_model,
                 download_dir=models_dir,  # models 폴더에 다운로드
-                tensor_parallel_size=1,
-                gpu_memory_utilization=0.91,
-                max_model_len=1024,
-                dtype="auto",
-                kv_cache_dtype="fp8",
-                enforce_eager=True,
-                trust_remote_code=True
+                tensor_parallel_size=hp.VLLM_OPTS.get("tensor_parallel_size", 1),
+                gpu_memory_utilization=hp.VLLM_OPTS.get("gpu_memory_utilization", 0.91),
+                max_model_len=hp.VLLM_OPTS.get("max_model_len", 1024),
+                dtype=hp.VLLM_OPTS.get("dtype", "auto"),
+                kv_cache_dtype=hp.VLLM_OPTS.get("kv_cache_dtype", "fp8"),
+                enforce_eager=hp.VLLM_OPTS.get("enforce_eager", True),
+                trust_remote_code=hp.VLLM_OPTS.get("trust_remote_code", True)
             )
 
             # 샘플링 파라미터 설정 (번역 품질 최적화)
-            self.sampling_params = SamplingParams(
-                temperature=0.3,
-                top_p=0.95,
-                max_tokens=128,
-                repetition_penalty=1.1,
-                skip_special_tokens=True,
-                stop=["\n", "English:", "Korean:", "---", "###"]
-            )
+            # 샘플링 파라미터 설정 (hyperparams 기반)
+            self.sampling_params = SamplingParams(**hp.SAMPLING_DEFAULTS)
 
             self.loaded_model_name = self.selected_model
             print("vLLM 모델 로딩 완료!")
