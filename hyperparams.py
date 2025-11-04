@@ -25,10 +25,10 @@ VLLM_OPTS: Dict[str, object] = {
 }
 
 SAMPLING_DEFAULTS: Dict[str, object] = {
-    "temperature": 0.3,
+    "temperature": 0.2,
     "top_p": 0.95,
     "max_tokens": 256,
-    "repetition_penalty": 1.1,
+    "repetition_penalty": 1.15,
     "skip_special_tokens": True,
     "stop": DEFAULT_STOP_TOKENS,
 }
