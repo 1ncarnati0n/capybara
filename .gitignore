@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.python-version
+
+cache/
+output/
+uploads/
+jobs/
+models/*.gguf
+models/*.bin
+
+vendor/
+.streamlit/secrets.toml
