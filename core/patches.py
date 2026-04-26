@@ -1,27 +1,27 @@
 """
 Workarounds for upstream bugs in oomol-lab/epub-translator.
 
-1. IRI-encoded hrefs vs. raw ZIP entries
-   The library reads chapter / TOC / manifest hrefs straight out of the OPF
-   (see `epub_translator/epub/spines.py` and `toc.py`) and then passes them to
-   `zipfile.ZipFile.open(...)`. EPUB spec requires those hrefs to be
-   IRI-encoded (spaces → %20, parentheses → %28/%29, etc.), but ZIP entries
-   store the raw filename. We monkey-patch `epub_translator.epub.zip.Zip` to
-   URL-decode every path before talking to `zipfile`.
+1. IRI 인코딩된 href vs. 원본 ZIP 엔트리
+이 라이브러리는 OPF에서 챕터/TOC/매니페스트의 href를 그대로 읽어온 뒤(epub_translator/epub/spines.py 및 toc.py 참조), 
+이를 zipfile.ZipFile.open(...)에 전달합니다. 
+EPUB 스펙에 따르면 이러한 href는 IRI 인코딩되어야 하지만(공백 → %20, 괄호 → %28/%29 등), 
+ZIP 엔트리에는 인코딩되지 않은 원본 파일명이 저장되어 있습니다. 
+이를 해결하기 위해 epub_translator.epub.zip.Zip을 몽키패치하여, 
+zipfile에 경로를 전달하기 전에 모든 경로를 URL 디코딩합니다.
 
-2. HTML named entities in XHTML chapters
-   `xml.etree.ElementTree.fromstring` only recognises the five XML built-in
-   entities. XHTML chapters routinely contain `&nbsp;`, `&copy;`, `&mdash;`,
-   etc., which are declared in the XHTML DTD that ElementTree never fetches.
-   We monkey-patch `epub_translator.xml.xml_like.fromstring` to replace HTML5
-   named entities with their Unicode characters before parsing.
+2. XHTML 챕터 내 HTML 네임드 엔티티
+xml.etree.ElementTree.fromstring은 XML 기본 내장 엔티티 5개만 인식합니다. 
+그런데 XHTML 챕터에는 &nbsp;, &copy;, &mdash; 등 XHTML DTD에 선언된 엔티티가 흔하게 사용되며, 
+ElementTree는 해당 DTD를 가져오지 않습니다. 
+이를 해결하기 위해 epub_translator.xml.xml_like.fromstring을 몽키패치하여, 
+파싱 전에 HTML5 네임드 엔티티를 해당 유니코드 문자로 치환합니다.
 
-3. Inline append presentation
-   In APPEND_TEXT mode, upstream appends the translation to the same text node
-   with a single space. For Korean review EPUBs we want the translated text on
-   the next line with a subtle highlight, while keeping REPLACE untouched.
+3. 인라인 append 표시 방식
+APPEND_TEXT 모드에서 업스트림은 번역문을 동일 텍스트 노드에 공백 하나만 넣고 이어붙입니다. 
+한국어 리뷰용 EPUB에서는 번역문을 다음 줄에 은은한 하이라이트와 함께 표시하되, 
+REPLACE 모드는 그대로 유지하도록 변경합니다.
 
-Importing this module applies these patches as a side effect.
+이 모듈을 임포트하면 위 패치들이 사이드 이펙트로 자동 적용됩니다.
 """
 
 from __future__ import annotations
