@@ -15,6 +15,7 @@ import streamlit as st
 import streamlit.runtime as st_runtime
 from epub_translator import SubmitKind
 
+from core.control import TranslationControl
 from core.llm_factory import LlamaServerConfig
 from core.progress import ProgressBus
 from core.translator import TranslationOptions, run_translation
@@ -35,7 +36,7 @@ MODEL_PRESETS = {
         "temperature": 0.25,
         "top_p": 0.9,
         "timeout": 300,
-        "max_group_tokens": 2200,
+        "max_group_tokens": 1200,
         "profile": "안정",
     },
     "EXAONE 3.5 7.8B + 2.4B draft (속도)": {
@@ -44,7 +45,7 @@ MODEL_PRESETS = {
         "temperature": 0.25,
         "top_p": 0.9,
         "timeout": 300,
-        "max_group_tokens": 2200,
+        "max_group_tokens": 900,
         "profile": "속도",
     },
     "EXAONE 4.0.1 32B IQ3_XS/IQ3_M (실험 고품질)": {
@@ -62,7 +63,7 @@ MODEL_PRESETS = {
         "temperature": 0.3,
         "top_p": 0.9,
         "timeout": 300,
-        "max_group_tokens": 2200,
+        "max_group_tokens": 1200,
         "profile": "수동",
     },
 }
@@ -77,6 +78,7 @@ def _init_state() -> None:
     st.session_state.setdefault("progress", 0.0)
     st.session_state.setdefault("result_path", None)
     st.session_state.setdefault("error", None)
+    st.session_state.setdefault("cancelled", False)
     st.session_state.setdefault("server_check", None)
 
 
@@ -156,16 +158,18 @@ def _append_progress_event(label: str, message: str, ts: float | None = None) ->
 
 def _start_job(src: Path, dst: Path, title: str, llm_cfg: LlamaServerConfig, opts: TranslationOptions) -> None:
     bus = ProgressBus()
+    control = TranslationControl()
     started_at = time.monotonic()
     thread = threading.Thread(
         target=run_translation,
-        args=(src, dst, CACHE, llm_cfg, opts, bus),
+        args=(src, dst, CACHE, llm_cfg, opts, bus, control),
         daemon=True,
     )
     thread.start()
     st.session_state.job = {
         "thread": thread,
         "bus": bus,
+        "control": control,
         "src": str(src),
         "dst": str(dst),
         "title": title,
@@ -178,7 +182,42 @@ def _start_job(src: Path, dst: Path, title: str, llm_cfg: LlamaServerConfig, opt
     st.session_state.progress = 0.0
     st.session_state.result_path = None
     st.session_state.error = None
+    st.session_state.cancelled = False
     _append_progress_event("start", f"{src.name} 번역 시작")
+
+
+def _job_control() -> TranslationControl | None:
+    job = st.session_state.job
+    if job is None:
+        return None
+    control = job.get("control")
+    if all(hasattr(control, name) for name in ("pause", "resume", "cancel", "paused", "cancelled")):
+        return control
+    return None
+
+
+def _request_pause() -> None:
+    control = _job_control()
+    if control is None:
+        return
+    control.pause()
+    _append_progress_event("pause", "일시정지 요청")
+
+
+def _request_resume() -> None:
+    control = _job_control()
+    if control is None:
+        return
+    control.resume()
+    _append_progress_event("resume", "번역 재개")
+
+
+def _request_cancel() -> None:
+    control = _job_control()
+    if control is None:
+        return
+    control.cancel()
+    _append_progress_event("stop", "번역 중지 요청")
 
 
 def _models_endpoint(base_url: str) -> str:
@@ -277,6 +316,12 @@ def _drain_events() -> bool:
             st.session_state.logs.append(f"[error] {ev.payload}")
             job["ended_at"] = time.monotonic()
             _append_progress_event("error", str(ev.payload).splitlines()[0], ev.ts)
+        elif ev.kind == "cancelled":
+            message = str(ev.payload)
+            st.session_state.cancelled = True
+            st.session_state.logs.append(f"[cancelled] {message}")
+            job["ended_at"] = time.monotonic()
+            _append_progress_event("cancelled", message, ev.ts)
     return job["thread"].is_alive()
 
 
@@ -285,7 +330,14 @@ def _active_state(job_active: bool) -> str:
         return "오류"
     if st.session_state.result_path:
         return "완료"
+    if st.session_state.cancelled:
+        return "중지됨"
     if job_active:
+        control = _job_control()
+        if control is not None and control.paused:
+            return "일시정지"
+        if control is not None and control.cancelled:
+            return "중지 중"
         return "번역 중"
     return "대기"
 
@@ -293,6 +345,47 @@ def _active_state(job_active: bool) -> str:
 def _recent_logs(limit: int = 4) -> str:
     logs = st.session_state.logs[-limit:]
     return "\n".join(logs) if logs else "(최근 이벤트 없음)"
+
+
+def _render_job_controls(job_active: bool, key_prefix: str) -> None:
+    control = _job_control()
+    paused = bool(control and control.paused)
+    cancelling = bool(control and control.cancelled)
+
+    st.markdown('<div class="control-panel">', unsafe_allow_html=True)
+    col_pause, col_resume, col_stop = st.columns([1, 1, 1])
+    with col_pause:
+        if st.button(
+            "일시정지",
+            disabled=not job_active or paused or cancelling,
+            use_container_width=True,
+            key=f"{key_prefix}_pause",
+        ):
+            _request_pause()
+            st.rerun()
+    with col_resume:
+        if st.button(
+            "재개",
+            disabled=not job_active or not paused or cancelling,
+            use_container_width=True,
+            key=f"{key_prefix}_resume",
+        ):
+            _request_resume()
+            st.rerun()
+    with col_stop:
+        if st.button(
+            "번역 중지",
+            disabled=not job_active or cancelling,
+            use_container_width=True,
+            key=f"{key_prefix}_stop",
+        ):
+            _request_cancel()
+            st.rerun()
+    if paused:
+        st.info("일시정지 중입니다. 현재 LLM 요청이 끝난 뒤 다음 조각부터 대기합니다.")
+    elif cancelling:
+        st.warning("중지 요청을 전달했습니다. 현재 LLM 요청이 끝나면 작업이 종료됩니다.")
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def _render_status_cards(active_state: str, model: str, server_check: dict[str, object] | None) -> None:
@@ -371,6 +464,13 @@ def _render_css() -> None:
         .section-note {
             color: rgba(49, 51, 63, 0.68);
             font-size: 0.9rem;
+        }
+        .control-panel {
+            border: 1px solid rgba(49, 51, 63, 0.12);
+            border-radius: 8px;
+            padding: 0.8rem 0.85rem 0.15rem;
+            background: #ffffff;
+            margin: 0.35rem 0 1rem;
         }
         @media (max-width: 860px) {
             .status-strip { grid-template-columns: 1fr; }
@@ -517,6 +617,9 @@ def main() -> None:
             st.subheader("실행 준비")
             st.metric("출력 모드", mode_label.split(" ")[0])
             st.metric("청크 토큰", int(max_group_tokens))
+            if job_active:
+                st.caption("현재 작업 제어")
+                _render_job_controls(job_active, "upload")
             if server_check is not None and server_check.get("ok"):
                 st.success("서버 연결 확인 완료")
             else:
@@ -550,13 +653,20 @@ def main() -> None:
         col_output.metric("출력 토큰", f"{output_tokens:,}")
         col_retry.metric("XML 재시도", int(st.session_state.fill_fail_count))
 
+        _render_job_controls(job_active, "progress")
+
         if input_cache_tokens:
             st.caption(f"서버 prompt cache 토큰: {input_cache_tokens:,}")
 
         recent_events = "\n".join(st.session_state.progress_events[-20:]) or "(최근 이벤트 없음)"
         st.text_area("최근 이벤트 타임라인", value=recent_events, height=230, disabled=True)
-        if job_active:
+        control = _job_control()
+        if job_active and control is not None and control.paused:
+            st.info("작업이 일시정지되어 있습니다.")
+        elif job_active:
             st.info("번역 진행 중입니다. 진행률과 경과시간은 자동 갱신됩니다. 캐시 응답은 토큰 통계에 잡히지 않을 수 있습니다.")
+        elif st.session_state.cancelled:
+            st.warning("번역이 중지되었습니다.")
         elif st.session_state.error:
             st.error("오류로 종료되었습니다. 로그 탭에서 상세 내용을 확인하세요.")
 

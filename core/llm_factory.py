@@ -5,6 +5,8 @@ from pathlib import Path
 
 from epub_translator import LLM
 
+from .prompts import STRICT_XML_FILL_RULES
+
 
 @dataclass
 class LlamaServerConfig:
@@ -21,7 +23,7 @@ class LlamaServerConfig:
 
 def build_llm(cfg: LlamaServerConfig, cache_root: Path) -> LLM:
     cache_root.mkdir(parents=True, exist_ok=True)
-    return LLM(
+    llm = LLM(
         key=cfg.api_key,
         url=cfg.base_url,
         model=cfg.model,
@@ -34,3 +36,5 @@ def build_llm(cfg: LlamaServerConfig, cache_root: Path) -> LLM:
         cache_path=str(cache_root / "llm"),
         log_dir_path=str(cache_root / "log"),
     )
+    llm._templates["fill"] = llm._env.from_string(STRICT_XML_FILL_RULES)
+    return llm

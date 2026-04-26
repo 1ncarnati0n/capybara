@@ -9,6 +9,7 @@ from pathlib import Path
 from epub_translator import LLM, SubmitKind, language, translate
 
 from . import patches  # noqa: F401  # monkey-patches EPUB/XML handling
+from .control import TranslationCancelled, TranslationControl
 from .llm_factory import LlamaServerConfig, build_llm
 from .progress import ProgressBus
 from .prompts import KOREAN_TRANSLATION_RULES
@@ -30,9 +31,11 @@ def run_translation(
     llm_cfg: LlamaServerConfig,
     options: TranslationOptions,
     bus: ProgressBus,
+    control: TranslationControl | None = None,
 ) -> None:
     """Blocking call. Run on a worker thread; emit events via `bus`."""
     stop_stats = threading.Event()
+    control = control or TranslationControl()
 
     def emit_stats(llm: LLM, started_at: float) -> None:
         elapsed = max(time.monotonic() - started_at, 0.001)
@@ -51,6 +54,8 @@ def run_translation(
     try:
         bus.emit("log", f"Building LLM client at {llm_cfg.base_url} (model={llm_cfg.model})")
         llm = build_llm(llm_cfg, cache_root)
+        llm.deterministic_xml_fill = options.submit_mode == SubmitKind.APPEND_TEXT
+        llm.translation_control = control
         stats_started_at = time.monotonic()
 
         def stats_monitor() -> None:
@@ -64,6 +69,7 @@ def run_translation(
         bus.emit("log", f"Mode={options.submit_mode.name}, max_group_tokens={options.max_group_tokens}")
 
         def on_progress(p: float) -> None:
+            control.checkpoint()
             bus.emit("progress", float(p))
 
         def on_fill_failed(event: object) -> None:
@@ -83,8 +89,11 @@ def run_translation(
             on_fill_failed=on_fill_failed,
         )
 
+        control.checkpoint()
         bus.emit("progress", 1.0)
         bus.emit("done", str(target_path))
+    except TranslationCancelled as exc:
+        bus.emit("cancelled", str(exc))
     except Exception as exc:
         bus.emit("error", f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}")
     finally:

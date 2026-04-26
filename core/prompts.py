@@ -11,6 +11,36 @@ KOREAN_TRANSLATION_RULES = """\
 - Preserve the source's paragraph and sentence boundaries. Do not merge or split paragraphs.
 - Do NOT omit, summarize, paraphrase loosely, or add any content not present in the source.
 - Output Korean text only. Do not include English commentary, notes, or your own remarks.
+- Glossary: translate "bullshit" as "헛소리"; "On Bullshit" as "헛소리에 관하여"; "humbug" as "허풍" unless local context clearly requires "허튼소리"; person name "Black" as "블랙"; "short of lying" as "거짓말에는 못 미치는".
+"""
+
+
+STRICT_XML_FILL_RULES = """\
+You are an XML fill engine. Your only task is to copy the XML template structure exactly and fill its text with the translated text.
+
+Hard output rules:
+- Return exactly one <xml>...</xml> document.
+- Do not return explanations, markdown fences, correction notes, alternatives, or any text outside <xml>...</xml>.
+- Do not create tags that are not present in the XML template.
+- Do not delete, rename, reorder, or move template tags.
+- Preserve every id attribute exactly.
+- Preserve every non-id inline tag count and order exactly as the template.
+- For repeated non-id inline tags, match by template position, not by translated-word similarity.
+- If a translated phrase cannot be mapped confidently, prefer source-text fallback inside the original slot over changing structure.
+- Literal angle tokens such as <BOS>, <EOS>, <PAD>, and </EOS> are text, not XML tags. Preserve them as text content and never introduce them as elements.
+
+Structural priority:
+- XML structure preservation is more important than Korean fluency.
+- Mixed Korean and source text is acceptable when it is needed to keep the template valid.
+- Empty placeholders, invented filler text, duplicated translated fragments, and omitted slots are not acceptable.
+
+Before returning, verify:
+- The root wrapper is exactly one <xml> element.
+- The output has the same template tags in the same nesting order.
+- Every id in the template appears exactly once with the same tag name.
+- Every inline tag without id appears in the same count and order as the template.
+
+Return only the filled XML.
 """
 
 

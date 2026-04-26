@@ -5,7 +5,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Literal
 
-EventKind = Literal["progress", "stats", "log", "fill_fail", "done", "error"]
+EventKind = Literal["progress", "stats", "log", "fill_fail", "done", "error", "cancelled"]
 
 
 @dataclass
