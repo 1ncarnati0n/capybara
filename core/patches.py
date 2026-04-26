@@ -33,8 +33,10 @@ from pathlib import Path
 from xml.etree.ElementTree import Element, fromstring as _et_fromstring
 
 from epub_translator.epub import zip as _zipmod
+from epub_translator.segment import TextSegment
 from epub_translator.xml import xml_like as _xml_like_mod
 from epub_translator.xml import index_of_parent as _index_of_parent
+from epub_translator.translation import xml_interrupter as _xml_interrupter_mod
 from epub_translator.xml_translator import submitter as _submitter_mod
 from epub_translator.xml_translator.submitter import SubmitKind as _SubmitKind
 
@@ -106,6 +108,123 @@ def _patched_fromstring(text):
 _xml_like_mod.fromstring = _patched_fromstring
 
 
+_PROTECTED_BLOCK_TAGS = frozenset({"pre", "script", "style"})
+_PROTECTED_INLINE_TAGS = frozenset({"code", "kbd", "samp", "var"})
+_BACKTICK_CODE_RE = re.compile(r"`[^`\n]+`")
+_WHOLE_BACKTICK_CODE_RE = re.compile(r"^\s*`[^`\n]+`\s*$")
+
+
+def _local_name(tag: str) -> str:
+    if tag.startswith("{"):
+        return tag.rsplit("}", 1)[1].lower()
+    return tag.lower()
+
+
+def _is_protected_block(element: Element) -> bool:
+    return _local_name(element.tag) in _PROTECTED_BLOCK_TAGS
+
+
+def _is_protected_inline(element: Element) -> bool:
+    return _local_name(element.tag) in _PROTECTED_INLINE_TAGS
+
+
+def _has_protected_block_parent(segment: TextSegment) -> bool:
+    return any(_is_protected_block(element) for element in segment.parent_stack)
+
+
+def _has_protected_inline_parent(segment: TextSegment) -> bool:
+    return any(_is_protected_inline(element) for element in segment.parent_stack)
+
+
+def _has_protected_block_context(element: Element | None) -> bool:
+    if element is None:
+        return False
+    return _is_protected_block(element)
+
+
+class CodeProtection:
+    """Protect code-like EPUB text from translation without relying on prompts."""
+
+    def __init__(self) -> None:
+        self._counter = 0
+        self._placeholder_to_text: dict[str, str] = {}
+
+    def protect_source_segments(self, segments):
+        for segment in segments:
+            if _has_protected_block_parent(segment):
+                continue
+
+            protected_text = self._protect_segment_text(segment)
+            if protected_text is None:
+                yield segment
+                continue
+
+            cloned = segment.clone()
+            cloned.text = protected_text
+            yield cloned
+
+    def restore_translated_segments(self, segments):
+        for segment in segments:
+            restored_text = self._restore_placeholders(segment.text)
+            if restored_text == segment.text:
+                yield segment
+                continue
+
+            cloned = segment.clone()
+            cloned.text = restored_text
+            yield cloned
+
+    def _protect_segment_text(self, segment: TextSegment) -> str | None:
+        if _has_protected_inline_parent(segment) or _WHOLE_BACKTICK_CODE_RE.match(segment.text):
+            return self._placeholder(segment.text)
+
+        protected_text = _BACKTICK_CODE_RE.sub(lambda match: self._placeholder(match.group(0)), segment.text)
+        if protected_text == segment.text:
+            return None
+        return protected_text
+
+    def _placeholder(self, text: str) -> str:
+        placeholder = f"__EN2KO_CODE_{self._counter:06d}__"
+        self._counter += 1
+        self._placeholder_to_text[placeholder] = text
+        return placeholder
+
+    def _restore_placeholders(self, text: str) -> str:
+        for placeholder, original_text in self._placeholder_to_text.items():
+            text = text.replace(placeholder, original_text)
+        return text
+
+
+_XMLInterrupter = _xml_interrupter_mod.XMLInterrupter
+_orig_xml_interrupter_init = _XMLInterrupter.__init__
+_orig_interrupt_source_text_segments = _XMLInterrupter.interrupt_source_text_segments
+_orig_interrupt_translated_text_segments = _XMLInterrupter.interrupt_translated_text_segments
+
+
+def _patched_xml_interrupter_init(self) -> None:
+    _orig_xml_interrupter_init(self)
+    self._en2ko_code_protection = CodeProtection()
+
+
+def _patched_interrupt_source_text_segments(self, text_segments):
+    protected = self._en2ko_code_protection.protect_source_segments(
+        _orig_interrupt_source_text_segments(self, text_segments)
+    )
+    yield from protected
+
+
+def _patched_interrupt_translated_text_segments(self, text_segments):
+    restored = self._en2ko_code_protection.restore_translated_segments(
+        _orig_interrupt_translated_text_segments(self, text_segments)
+    )
+    yield from restored
+
+
+_XMLInterrupter.__init__ = _patched_xml_interrupter_init
+_XMLInterrupter.interrupt_source_text_segments = _patched_interrupt_source_text_segments
+_XMLInterrupter.interrupt_translated_text_segments = _patched_interrupt_translated_text_segments
+
+
 _Submitter = _submitter_mod._Submitter
 _orig_append_combined_after_tail = _Submitter._append_combined_after_tail
 _TRANSLATION_STYLE = "background-color: rgba(255, 248, 190, 0.45);"
@@ -146,6 +265,9 @@ def _patched_append_combined_after_tail(
     anchor_element,
     append_to_end,
 ) -> None:
+    if _has_protected_block_context(node_element):
+        return
+
     if self._action != _SubmitKind.APPEND_TEXT:
         return _orig_append_combined_after_tail(
             self,

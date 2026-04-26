@@ -8,7 +8,7 @@ from pathlib import Path
 
 from epub_translator import LLM, SubmitKind, language, translate
 
-from . import patches  # noqa: F401  ← monkey-patches Zip for IRI-encoded hrefs
+from . import patches  # noqa: F401  # monkey-patches EPUB/XML handling
 from .llm_factory import LlamaServerConfig, build_llm
 from .progress import ProgressBus
 from .prompts import KOREAN_TRANSLATION_RULES
