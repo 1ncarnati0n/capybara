@@ -11,22 +11,23 @@
              │ 백그라운드 스레드 + Queue
 ┌────────────▼─────────────────────┐
 │  core/translator.py              │  ← epub-translator 래퍼
-│  · KOREAN user_prompt 주입        │
-│  · on_progress / on_fill_failed   │
+│  · KOREAN user_prompt 주입       │
+│  · on_progress / on_fill_failed  │
 └────────────┬─────────────────────┘
              │
 ┌────────────▼─────────────────────┐
-│  epub_translator.translate(...)   │  ← 청크 분할, 캐시, XML 보존
-│  · cache_path 로 자동 재개        │
+│  epub_translator.translate(...)  │  ← 청크 분할, 캐시, XML 보존
+│  · cache_path 로 자동 재개       │
 └────────────┬─────────────────────┘
              │ OpenAI 호환 HTTP
 ┌────────────▼─────────────────────┐
 │  llama-server (CUDA)             │  ← scripts/lm-server.sh
-│  EXAONE-3.5-7.8B-Instruct Q6_K   │
+│  EXAONE-3.5-7.8B-Instruct Q6_K   │  기본
 └──────────────────────────────────┘
 ```
 
 핵심 설계 결정:
+
 - **재개 가능성**은 epub-translator 내장 디스크 캐시(`cache/llm`)로 처리. 별도 잡 큐 없음.
 - **듀얼 LLM**(`translation_llm` + `fill_llm`) 옵션은 16GB VRAM 한 대에 두 모델을 동시 로드하기 어려워 MVP에서는 단일 LLM 사용.
 - **토크나이저 불일치**(tiktoken `o200k_base` vs EXAONE 자체 토크나이저)를 고려해 `max_group_tokens=2200`으로 보수적으로 설정. EXAONE은 한국어를 더 짧게 인코딩하므로 컨텍스트 초과는 발생하지 않음.
@@ -34,19 +35,19 @@
 
 ## 디렉터리
 
-| 경로 | 용도 |
-|---|---|
-| `app.py` | Streamlit 앱 진입점 |
-| `core/llm_factory.py` | `LLM(...)` 인스턴스 빌더 |
-| `core/translator.py` | `translate(...)` 호출, 콜백→이벤트 큐 |
-| `core/prompts.py` | 한국어 번역 규칙 (user_prompt) |
-| `core/progress.py` | 워커→UI 이벤트 채널 |
-| `scripts/lm-server.sh` | RTX 4080용 llama-server 기동 |
-| `models/` | GGUF 파일 (gitignore) |
-| `cache/` | epub-translator 응답 캐시 (gitignore) |
-| `uploads/` | 사용자 업로드 EPUB (gitignore) |
-| `output/` | 번역 결과 EPUB (gitignore) |
-| `vendor/epub-translator/` | 분석/참조용 클론 (gitignore) |
+| 경로                        | 용도                                         |
+| --------------------------- | -------------------------------------------- |
+| `app.py`                    | Streamlit 앱 진입점                          |
+| `core/llm_factory.py`       | `LLM(...)` 인스턴스 빌더                     |
+| `core/translator.py`        | `translate(...)` 호출, 콜백→이벤트 큐        |
+| `core/prompts.py`           | 한국어 번역 규칙 (user_prompt)               |
+| `core/progress.py`          | 워커→UI 이벤트 채널                          |
+| `scripts/lm-server.sh`      | EXAONE 3.5 7.8B Q6_K llama-server 기동       |
+| `models/`                   | GGUF 파일 (gitignore)                        |
+| `cache/`                    | epub-translator 응답 캐시 (gitignore)        |
+| `uploads/`                  | 사용자 업로드 EPUB (gitignore)               |
+| `output/`                   | 번역 결과 EPUB (gitignore)                   |
+| `vendor/epub-translator/`   | 분석/참조용 클론 (gitignore)                 |
 
 ## 사전 요구
 
@@ -69,30 +70,39 @@ uv sync
 # 기본 경로: models/EXAONE-3.5-7.8B-Instruct-Q6_K.gguf
 ```
 
-> 참고: `huggingface_hub`의 `hf` CLI를 쓰고 싶다면 `uv sync --extra download`로 설치하세요. 기본 다운로드는 `wget`/`curl`으로 동작합니다.
-
 ## 실행
 
 터미널 두 개를 사용합니다.
 
 **터미널 1 — llama.cpp 서버**
+
 ```bash
 scripts/lm-server.sh
 ```
+
 환경변수로 조정 가능: `MODEL`, `PORT`, `CTX`, `API_KEY`, `LLAMA_SERVER_BIN`.
 
 **터미널 2 — Streamlit UI**
+
 ```bash
 uv run app.py
 ```
+
 브라우저에서 EPUB을 업로드하고 옵션을 골라 시작합니다.
+
+Streamlit UI는 운영 대시보드 형태입니다.
+
+- 사이드바에서 모델 프리셋을 고르고 `연결 확인`으로 `/v1/models` 응답을 확인합니다.
+- `작업` 탭에서 EPUB을 업로드하고 번역을 시작합니다.
+- `진행`, `결과`, `로그`, `설정 요약` 탭에서 상태와 결과 파일을 확인합니다.
+- 서버가 꺼져 있으면 선택한 프리셋에 맞는 실행 명령이 UI에 표시됩니다.
 
 ## 출력 모드
 
-| 모드 | 결과 |
-|---|---|
+| 모드                 | 결과                                             |
+| -------------------- | ------------------------------------------------ |
 | `APPEND_TEXT` (기본) | 원문 다음 줄에 아주 엷은 노란 배경의 번역문 추가 |
-| `REPLACE` | 원문을 한국어로 교체 → 한국어 단독본 |
+| `REPLACE`            | 원문을 한국어로 교체 → 한국어 단독본             |
 
 ## 파일명 규칙
 
