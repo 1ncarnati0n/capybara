@@ -22,14 +22,14 @@
              │ OpenAI 호환 HTTP
 ┌────────────▼─────────────────────┐
 │  llama-server (CUDA)             │  ← scripts/lm-server.sh
-│  EXAONE-3.5-7.8B-Instruct Q6_K   │  기본
+│  EXAONE 3.5 7.8B Q6_K            │  기본
 └──────────────────────────────────┘
 ```
 
 핵심 설계 결정:
 
 - **재개 가능성**은 epub-translator 내장 디스크 캐시(`cache/llm`)로 처리. 별도 잡 큐 없음.
-- **듀얼 LLM**(`translation_llm` + `fill_llm`) 옵션은 16GB VRAM 한 대에 두 모델을 동시 로드하기 어려워 MVP에서는 단일 LLM 사용.
+- **단일 서버 선택**: 16GB VRAM 한 대에서는 여러 LLM 서버를 동시에 올리지 않고, 기본/속도/실험 고품질 중 하나만 실행.
 - **토크나이저 불일치**(tiktoken `o200k_base` vs EXAONE 자체 토크나이저)를 고려해 `max_group_tokens=2200`으로 보수적으로 설정. EXAONE은 한국어를 더 짧게 인코딩하므로 컨텍스트 초과는 발생하지 않음.
 - **청크 동시성 1**: GPU 1대 환경에 맞춤(`concurrency=1`).
 
@@ -42,7 +42,9 @@
 | `core/translator.py`        | `translate(...)` 호출, 콜백→이벤트 큐        |
 | `core/prompts.py`           | 한국어 번역 규칙 (user_prompt)               |
 | `core/progress.py`          | 워커→UI 이벤트 채널                          |
-| `scripts/lm-server.sh`      | EXAONE 3.5 7.8B Q6_K llama-server 기동       |
+| `scripts/lm-server.sh`      | EXAONE 3.5 7.8B Q6_K 기본 서버 기동          |
+| `scripts/lm-spec.sh`        | EXAONE 3.5 7.8B + 2.4B draft 속도 트랙       |
+| `scripts/lm-exaone4.sh`     | EXAONE 4.0.1 32B 실험 고품질 트랙            |
 | `models/`                   | GGUF 파일 (gitignore)                        |
 | `cache/`                    | epub-translator 응답 캐시 (gitignore)        |
 | `uploads/`                  | 사용자 업로드 EPUB (gitignore)               |
@@ -81,6 +83,16 @@ scripts/lm-server.sh
 ```
 
 환경변수로 조정 가능: `MODEL`, `PORT`, `CTX`, `API_KEY`, `LLAMA_SERVER_BIN`.
+
+모델 프리셋별 서버:
+
+| 프리셋 | 실행 명령 | 모델 파일 |
+| --- | --- | --- |
+| EXAONE 3.5 7.8B Q6_K (현재) | `scripts/lm-server.sh` | `models/EXAONE-3.5-7.8B-Instruct-Q6_K.gguf` |
+| EXAONE 3.5 7.8B + 2.4B draft (속도) | `scripts/lm-spec.sh` | 기본 7.8B + `models/EXAONE-3.5-2.4B-Instruct-Q4_K_M.gguf` |
+| EXAONE 4.0.1 32B IQ3_XS/IQ3_M (실험 고품질) | `scripts/lm-exaone4.sh` | `MODEL=/path/to/exaone4.gguf`로 지정 |
+
+16GB GPU에서는 한 번에 하나의 서버만 실행하세요. 4.0.1 32B는 실험 옵션이며, 기본 스크립트는 `CTX=4096`으로 시작합니다.
 
 **터미널 2 — Streamlit UI**
 

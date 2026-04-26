@@ -38,14 +38,23 @@ MODEL_PRESETS = {
         "max_group_tokens": 2200,
         "profile": "안정",
     },
-    "EXAONE 3.5 32B Q4_K_M": {
-        "base_url": "http://127.0.0.1:9080/v1",
-        "model": "exaone-3.5-32b-instruct",
-        "temperature": 0.2,
+    "EXAONE 3.5 7.8B + 2.4B draft (속도)": {
+        "base_url": "http://127.0.0.1:9072/v1",
+        "model": "exaone-3.5-7.8b-spec",
+        "temperature": 0.25,
         "top_p": 0.9,
-        "timeout": 600,
-        "max_group_tokens": 1800,
-        "profile": "고품질",
+        "timeout": 300,
+        "max_group_tokens": 2200,
+        "profile": "속도",
+    },
+    "EXAONE 4.0.1 32B IQ3_XS/IQ3_M (실험 고품질)": {
+        "base_url": "http://127.0.0.1:9081/v1",
+        "model": "exaone-4.0.1-32b",
+        "temperature": 0.5,
+        "top_p": 0.9,
+        "timeout": 900,
+        "max_group_tokens": 1500,
+        "profile": "실험 고품질",
     },
     "Custom": {
         "base_url": "http://127.0.0.1:9070/v1",
@@ -62,6 +71,9 @@ MODEL_PRESETS = {
 def _init_state() -> None:
     st.session_state.setdefault("job", None)  # dict | None
     st.session_state.setdefault("logs", [])
+    st.session_state.setdefault("progress_events", [])
+    st.session_state.setdefault("metrics", {})
+    st.session_state.setdefault("fill_fail_count", 0)
     st.session_state.setdefault("progress", 0.0)
     st.session_state.setdefault("result_path", None)
     st.session_state.setdefault("error", None)
@@ -93,9 +105,53 @@ def _format_duration(seconds: float) -> str:
     return f"{minutes}m{seconds_part}s"
 
 
+def _format_elapsed(seconds: float) -> str:
+    total_seconds = max(0, int(round(seconds)))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds_part = divmod(remainder, 60)
+    if hours:
+        return f"{hours}h {minutes:02d}m {seconds_part:02d}s"
+    if minutes:
+        return f"{minutes}m {seconds_part:02d}s"
+    return f"{seconds_part}s"
+
+
+def _format_eta(progress: float, elapsed: float, active: bool) -> str:
+    if not active:
+        return "-"
+    if progress <= 0.02:
+        return "계산 중"
+    remaining = max((elapsed / progress) - elapsed, 0.0)
+    return _format_elapsed(remaining)
+
+
 def _final_output_path(title: str, started_at: float) -> Path:
     duration = _format_duration(time.monotonic() - started_at)
     return _unique_path(OUTPUT / f"{title}-{duration}_ko.epub")
+
+
+def _job_elapsed_seconds(active: bool) -> float:
+    job = st.session_state.job
+    if job is None:
+        return 0.0
+    started_at = float(job.get("started_at") or time.monotonic())
+    ended_at = job.get("ended_at")
+    if ended_at is None and active:
+        ended_at = time.monotonic()
+    if ended_at is None:
+        ended_at = time.monotonic()
+    return max(float(ended_at) - started_at, 0.0)
+
+
+def _event_line(ts: float, label: str, message: str) -> str:
+    clock = time.strftime("%H:%M:%S", time.localtime(ts))
+    return f"{clock} · {label} · {message}"
+
+
+def _append_progress_event(label: str, message: str, ts: float | None = None) -> None:
+    events = st.session_state.progress_events
+    events.append(_event_line(ts or time.time(), label, message))
+    del events[:-200]
 
 
 def _start_job(src: Path, dst: Path, title: str, llm_cfg: LlamaServerConfig, opts: TranslationOptions) -> None:
@@ -116,9 +172,13 @@ def _start_job(src: Path, dst: Path, title: str, llm_cfg: LlamaServerConfig, opt
         "started_at": started_at,
     }
     st.session_state.logs = []
+    st.session_state.progress_events = []
+    st.session_state.metrics = {}
+    st.session_state.fill_fail_count = 0
     st.session_state.progress = 0.0
     st.session_state.result_path = None
     st.session_state.error = None
+    _append_progress_event("start", f"{src.name} 번역 시작")
 
 
 def _models_endpoint(base_url: str) -> str:
@@ -126,9 +186,13 @@ def _models_endpoint(base_url: str) -> str:
 
 
 def _server_command(preset_name: str) -> str:
+    if "draft" in preset_name or "속도" in preset_name:
+        return "scripts/lm-spec.sh"
+    if "4.0.1" in preset_name or "실험 고품질" in preset_name:
+        return "scripts/lm-exaone4.sh"
     if "EXAONE" in preset_name:
         return "scripts/lm-server.sh"
-    return "MODEL=/path/to/model.gguf PORT=9090 ALIAS=my-model scripts/lm-server.sh"
+    return "MODEL=/path/to/model.gguf PORT=9089 ALIAS=my-model scripts/lm-server.sh"
 
 
 def _check_server(base_url: str, api_key: str) -> dict[str, object]:
@@ -177,10 +241,19 @@ def _drain_events() -> bool:
     for ev in bus.drain():
         if ev.kind == "progress":
             st.session_state.progress = float(ev.payload)
+            _append_progress_event("progress", f"{float(ev.payload) * 100:.1f}%", ev.ts)
+        elif ev.kind == "stats":
+            if isinstance(ev.payload, dict):
+                st.session_state.metrics = ev.payload
         elif ev.kind == "log":
-            st.session_state.logs.append(f"[log] {ev.payload}")
+            message = str(ev.payload)
+            st.session_state.logs.append(f"[log] {message}")
+            _append_progress_event("log", message, ev.ts)
         elif ev.kind == "fill_fail":
-            st.session_state.logs.append(f"[fill-retry] {ev.payload}")
+            message = str(ev.payload)
+            st.session_state.fill_fail_count += 1
+            st.session_state.logs.append(f"[fill-retry] {message}")
+            _append_progress_event("retry", message, ev.ts)
         elif ev.kind == "done":
             result_path = Path(ev.payload)
             try:
@@ -192,12 +265,18 @@ def _drain_events() -> bool:
                     result_path = final_path
                 st.session_state.result_path = str(result_path)
                 st.session_state.logs.append(f"[done] {result_path}")
+                job["ended_at"] = time.monotonic()
+                _append_progress_event("done", result_path.name, ev.ts)
             except Exception as exc:
                 st.session_state.error = f"{type(exc).__name__}: {exc}"
                 st.session_state.logs.append(f"[error] {st.session_state.error}")
+                job["ended_at"] = time.monotonic()
+                _append_progress_event("error", st.session_state.error, ev.ts)
         elif ev.kind == "error":
             st.session_state.error = ev.payload
             st.session_state.logs.append(f"[error] {ev.payload}")
+            job["ended_at"] = time.monotonic()
+            _append_progress_event("error", str(ev.payload).splitlines()[0], ev.ts)
     return job["thread"].is_alive()
 
 
@@ -450,13 +529,34 @@ def main() -> None:
     with progress_tab:
         st.subheader("진행 상황")
         progress_value = min(max(st.session_state.progress, 0.0), 1.0)
+        elapsed_seconds = _job_elapsed_seconds(job_active)
+        metrics = st.session_state.metrics or {}
+        total_tokens = int(metrics.get("total_tokens") or 0)
+        input_tokens = int(metrics.get("input_tokens") or 0)
+        output_tokens = int(metrics.get("output_tokens") or 0)
+        input_cache_tokens = int(metrics.get("input_cache_tokens") or 0)
+        tokens_per_sec = float(metrics.get("tokens_per_sec") or 0.0)
+
         st.progress(progress_value)
-        col_state, col_percent, col_recent = st.columns([1, 1, 2])
-        col_state.metric("상태", active_state)
-        col_percent.metric("진행률", f"{progress_value * 100:.0f}%")
-        col_recent.text_area("최근 이벤트", value=_recent_logs(), height=130, disabled=True)
+        col_percent, col_elapsed, col_eta, col_tps = st.columns(4)
+        col_percent.metric("진행률", f"{progress_value * 100:.1f}%")
+        col_elapsed.metric("경과시간", _format_elapsed(elapsed_seconds))
+        col_eta.metric("예상 남은 시간", _format_eta(progress_value, elapsed_seconds, job_active))
+        col_tps.metric("토큰/초", f"{tokens_per_sec:.1f}" if tokens_per_sec else "-")
+
+        col_total, col_input, col_output, col_retry = st.columns(4)
+        col_total.metric("전체 토큰", f"{total_tokens:,}")
+        col_input.metric("입력 토큰", f"{input_tokens:,}")
+        col_output.metric("출력 토큰", f"{output_tokens:,}")
+        col_retry.metric("XML 재시도", int(st.session_state.fill_fail_count))
+
+        if input_cache_tokens:
+            st.caption(f"서버 prompt cache 토큰: {input_cache_tokens:,}")
+
+        recent_events = "\n".join(st.session_state.progress_events[-20:]) or "(최근 이벤트 없음)"
+        st.text_area("최근 이벤트 타임라인", value=recent_events, height=230, disabled=True)
         if job_active:
-            st.info("번역 진행 중입니다. 진행률은 자동 갱신됩니다.")
+            st.info("번역 진행 중입니다. 진행률과 경과시간은 자동 갱신됩니다. 캐시 응답은 토큰 통계에 잡히지 않을 수 있습니다.")
         elif st.session_state.error:
             st.error("오류로 종료되었습니다. 로그 탭에서 상세 내용을 확인하세요.")
 
@@ -503,7 +603,7 @@ def main() -> None:
         )
 
     if job_active:
-        time.sleep(0.8)
+        time.sleep(0.5)
         st.rerun()
 
 
