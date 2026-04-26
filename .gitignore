@@ -10,6 +10,9 @@ uploads/
 jobs/
 models/*.gguf
 models/*.bin
+models/**/*.gguf
+models/**/*.bin
+models/.cache/
 
 vendor/
 .streamlit/secrets.toml

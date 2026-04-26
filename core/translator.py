@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import threading
+import time
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
 
-from epub_translator import SubmitKind, language, translate
+from epub_translator import LLM, SubmitKind, language, translate
 
 from . import patches  # noqa: F401  ← monkey-patches Zip for IRI-encoded hrefs
 from .llm_factory import LlamaServerConfig, build_llm
@@ -30,9 +32,33 @@ def run_translation(
     bus: ProgressBus,
 ) -> None:
     """Blocking call. Run on a worker thread; emit events via `bus`."""
+    stop_stats = threading.Event()
+
+    def emit_stats(llm: LLM, started_at: float) -> None:
+        elapsed = max(time.monotonic() - started_at, 0.001)
+        total_tokens = int(llm.total_tokens)
+        bus.emit(
+            "stats",
+            {
+                "total_tokens": total_tokens,
+                "input_tokens": int(llm.input_tokens),
+                "input_cache_tokens": int(llm.input_cache_tokens),
+                "output_tokens": int(llm.output_tokens),
+                "tokens_per_sec": total_tokens / elapsed,
+            },
+        )
+
     try:
         bus.emit("log", f"Building LLM client at {llm_cfg.base_url} (model={llm_cfg.model})")
         llm = build_llm(llm_cfg, cache_root)
+        stats_started_at = time.monotonic()
+
+        def stats_monitor() -> None:
+            while not stop_stats.wait(1.0):
+                emit_stats(llm, stats_started_at)
+
+        stats_thread = threading.Thread(target=stats_monitor, daemon=True)
+        stats_thread.start()
 
         bus.emit("log", f"Translating: {source_path.name} → {target_path.name}")
         bus.emit("log", f"Mode={options.submit_mode.name}, max_group_tokens={options.max_group_tokens}")
@@ -61,3 +87,9 @@ def run_translation(
         bus.emit("done", str(target_path))
     except Exception as exc:
         bus.emit("error", f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}")
+    finally:
+        stop_stats.set()
+        if "stats_thread" in locals():
+            stats_thread.join(timeout=0.2)
+        if "llm" in locals() and "stats_started_at" in locals():
+            emit_stats(llm, stats_started_at)
