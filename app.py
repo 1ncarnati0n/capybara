@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sys
 import threading
 import time
@@ -20,6 +21,8 @@ OUTPUT = ROOT / "output"
 CACHE = ROOT / "cache"
 for d in (UPLOADS, OUTPUT, CACHE):
     d.mkdir(parents=True, exist_ok=True)
+
+_UNSAFE_FILENAME_CHARS_RE = re.compile(r'[\\/:*?"<>|\x00-\x1f]+')
 
 MODEL_PRESETS = {
     "EXAONE 3.5 7.8B Q6_K (현재)": {
@@ -69,15 +72,53 @@ def _init_state() -> None:
     st.session_state.setdefault("error", None)
 
 
-def _start_job(src: Path, dst: Path, llm_cfg: LlamaServerConfig, opts: TranslationOptions) -> None:
+def _safe_book_title(filename: str) -> str:
+    title = Path(filename).stem.strip()
+    title = _UNSAFE_FILENAME_CHARS_RE.sub("_", title)
+    title = re.sub(r"\s+", " ", title).strip(" ._")
+    return title or "book"
+
+
+def _unique_path(path: Path) -> Path:
+    if not path.exists():
+        return path
+
+    for index in range(2, 1000):
+        candidate = path.with_name(f"{path.stem}-{index}{path.suffix}")
+        if not candidate.exists():
+            return candidate
+
+    raise RuntimeError(f"Cannot find available output filename for {path.name}")
+
+
+def _format_duration(seconds: float) -> str:
+    total_seconds = max(0, int(round(seconds)))
+    minutes, seconds_part = divmod(total_seconds, 60)
+    return f"{minutes}m{seconds_part}s"
+
+
+def _final_output_path(title: str, started_at: float) -> Path:
+    duration = _format_duration(time.monotonic() - started_at)
+    return _unique_path(OUTPUT / f"{title}-{duration}_ko.epub")
+
+
+def _start_job(src: Path, dst: Path, title: str, llm_cfg: LlamaServerConfig, opts: TranslationOptions) -> None:
     bus = ProgressBus()
+    started_at = time.monotonic()
     thread = threading.Thread(
         target=run_translation,
         args=(src, dst, CACHE, llm_cfg, opts, bus),
         daemon=True,
     )
     thread.start()
-    st.session_state.job = {"thread": thread, "bus": bus, "src": str(src), "dst": str(dst)}
+    st.session_state.job = {
+        "thread": thread,
+        "bus": bus,
+        "src": str(src),
+        "dst": str(dst),
+        "title": title,
+        "started_at": started_at,
+    }
     st.session_state.logs = []
     st.session_state.progress = 0.0
     st.session_state.result_path = None
@@ -98,8 +139,19 @@ def _drain_events() -> bool:
         elif ev.kind == "fill_fail":
             st.session_state.logs.append(f"[fill-retry] {ev.payload}")
         elif ev.kind == "done":
-            st.session_state.result_path = ev.payload
-            st.session_state.logs.append(f"[done] {ev.payload}")
+            result_path = Path(ev.payload)
+            try:
+                title = str(job.get("title") or _safe_book_title(result_path.stem))
+                started_at = float(job.get("started_at") or time.monotonic())
+                final_path = _final_output_path(title, started_at)
+                if result_path.exists():
+                    result_path.rename(final_path)
+                    result_path = final_path
+                st.session_state.result_path = str(result_path)
+                st.session_state.logs.append(f"[done] {result_path}")
+            except Exception as exc:
+                st.session_state.error = f"{type(exc).__name__}: {exc}"
+                st.session_state.logs.append(f"[error] {st.session_state.error}")
         elif ev.kind == "error":
             st.session_state.error = ev.payload
             st.session_state.logs.append(f"[error] {ev.payload}")
@@ -222,8 +274,9 @@ def main() -> None:
         start_disabled = job_active or uploaded is None
         if st.button("번역 시작", type="primary", disabled=start_disabled, use_container_width=True):
             job_id = uuid.uuid4().hex[:8]
-            src_path = UPLOADS / f"{job_id}__{uploaded.name}"
-            dst_path = OUTPUT / f"{job_id}__{src_path.stem}.ko.epub"
+            title = _safe_book_title(uploaded.name)
+            src_path = UPLOADS / f"{title}__{job_id}.epub"
+            dst_path = OUTPUT / f"{title}__{job_id}.tmp.epub"
             src_path.write_bytes(uploaded.getvalue())
 
             llm_cfg = LlamaServerConfig(
@@ -239,7 +292,7 @@ def main() -> None:
                 max_group_tokens=int(max_group_tokens),
                 max_retries=int(max_retries),
             )
-            _start_job(src_path, dst_path, llm_cfg, opts)
+            _start_job(src_path, dst_path, title, llm_cfg, opts)
             st.rerun()
 
     with col_right:

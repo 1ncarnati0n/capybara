@@ -16,7 +16,12 @@ Workarounds for upstream bugs in oomol-lab/epub-translator.
    We monkey-patch `epub_translator.xml.xml_like.fromstring` to replace HTML5
    named entities with their Unicode characters before parsing.
 
-Importing this module applies both patches as a side effect.
+3. Inline append presentation
+   In APPEND_TEXT mode, upstream appends the translation to the same text node
+   with a single space. For Korean review EPUBs we want the translated text on
+   the next line with a subtle highlight, while keeping REPLACE untouched.
+
+Importing this module applies these patches as a side effect.
 """
 
 from __future__ import annotations
@@ -25,10 +30,13 @@ import html.entities
 import re
 import urllib.parse
 from pathlib import Path
-from xml.etree.ElementTree import fromstring as _et_fromstring
+from xml.etree.ElementTree import Element, fromstring as _et_fromstring
 
 from epub_translator.epub import zip as _zipmod
 from epub_translator.xml import xml_like as _xml_like_mod
+from epub_translator.xml import index_of_parent as _index_of_parent
+from epub_translator.xml_translator import submitter as _submitter_mod
+from epub_translator.xml_translator.submitter import SubmitKind as _SubmitKind
 
 _Zip = _zipmod.Zip
 _orig_read = _Zip.read
@@ -96,3 +104,73 @@ def _patched_fromstring(text):
 
 
 _xml_like_mod.fromstring = _patched_fromstring
+
+
+_Submitter = _submitter_mod._Submitter
+_orig_append_combined_after_tail = _Submitter._append_combined_after_tail
+_TRANSLATION_STYLE = "background-color: rgba(255, 248, 190, 0.45);"
+
+
+def _tag_like(reference: Element, local_name: str) -> str:
+    if reference.tag.startswith("{"):
+        namespace, _ = reference.tag[1:].split("}", 1)
+        return f"{{{namespace}}}{local_name}"
+    return local_name
+
+
+def _wrap_inline_translation(reference: Element, combined: Element) -> tuple[Element, Element]:
+    br = Element(_tag_like(reference, "br"))
+    wrapper = Element(_tag_like(reference, "span"), {"style": _TRANSLATION_STYLE})
+    wrapper.text = combined.text
+    for child in list(combined):
+        combined.remove(child)
+        wrapper.append(child)
+    return br, wrapper
+
+
+def _insert_inline_translation(
+    node_element: Element,
+    insert_position: int,
+    combined: Element,
+) -> None:
+    br, wrapper = _wrap_inline_translation(node_element, combined)
+    node_element.insert(insert_position, br)
+    node_element.insert(insert_position + 1, wrapper)
+
+
+def _patched_append_combined_after_tail(
+    self,
+    node_element,
+    text_segments,
+    tail_element,
+    anchor_element,
+    append_to_end,
+) -> None:
+    if self._action != _SubmitKind.APPEND_TEXT:
+        return _orig_append_combined_after_tail(
+            self,
+            node_element,
+            text_segments,
+            tail_element,
+            anchor_element,
+            append_to_end,
+        )
+
+    combined = self._combine_text_segments(text_segments)
+    if combined is None:
+        return
+
+    if tail_element is not None:
+        insert_position = _index_of_parent(node_element, tail_element) + 1
+    elif append_to_end:
+        insert_position = len(node_element)
+    elif anchor_element is not None:
+        ref_index = _index_of_parent(node_element, anchor_element)
+        insert_position = ref_index if ref_index > 0 else 0
+    else:
+        insert_position = 0
+
+    _insert_inline_translation(node_element, insert_position, combined)
+
+
+_Submitter._append_combined_after_tail = _patched_append_combined_after_tail
