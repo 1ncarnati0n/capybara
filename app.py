@@ -172,13 +172,12 @@ def main() -> None:
         st.header("번역")
         mode_label = st.selectbox(
             "출력 모드",
-            options=["APPEND_BLOCK (한·영 대조)", "REPLACE (한국어만)", "APPEND_TEXT (인라인)"],
+            options=["APPEND_TEXT (인라인)", "REPLACE (한국어만)"],
             index=0,
         )
         submit_mode = {
-            "APPEND_BLOCK (한·영 대조)": SubmitKind.APPEND_BLOCK,
-            "REPLACE (한국어만)": SubmitKind.REPLACE,
             "APPEND_TEXT (인라인)": SubmitKind.APPEND_TEXT,
+            "REPLACE (한국어만)": SubmitKind.REPLACE,
         }[mode_label]
         max_group_tokens = st.number_input(
             "max_group_tokens (tiktoken o200k_base)",

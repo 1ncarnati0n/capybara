@@ -1,6 +1,6 @@
 # en2ko — 영→한 EPUB 번역기
 
-영어 EPUB을 로컬 LLM(EXAONE 3.5 7.8B, llama.cpp)으로 한국어 번역본(또는 한·영 대조본)으로 변환합니다. 번역 코어는 [`oomol-lab/epub-translator`](https://github.com/oomol-lab/epub-translator), UI는 Streamlit입니다.
+영어 EPUB을 로컬 LLM(EXAONE 3.5 7.8B, llama.cpp)으로 한국어 번역본으로 변환합니다. 번역 코어는 [`oomol-lab/epub-translator`](https://github.com/oomol-lab/epub-translator), UI는 Streamlit입니다.
 
 ## 아키텍처
 
@@ -91,9 +91,8 @@ uv run app.py
 
 | 모드 | 결과 |
 |---|---|
-| `APPEND_BLOCK` (기본) | 한국어 번역을 원문 다음 블록으로 추가 → 한·영 대조본 |
+| `APPEND_TEXT` (기본) | 인라인 텍스트 옆에 번역 추가 |
 | `REPLACE` | 원문을 한국어로 교체 → 한국어 단독본 |
-| `APPEND_TEXT` | 인라인 텍스트 옆에 번역 추가 |
 
 ## 한국어 번역 규칙
 

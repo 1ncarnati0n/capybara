@@ -14,7 +14,7 @@ from .prompts import KOREAN_TRANSLATION_RULES
 
 @dataclass
 class TranslationOptions:
-    submit_mode: SubmitKind = SubmitKind.APPEND_BLOCK
+    submit_mode: SubmitKind = SubmitKind.APPEND_TEXT
     max_group_tokens: int = 2200
     max_retries: int = 5
     concurrency: int = 1
